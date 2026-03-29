@@ -10,16 +10,24 @@
 //! `sys_` then the name of the syscall. You can find functions like this in
 //! submodules, and you should also implement syscalls this way.
 
+#![allow(missing_docs)]
+
 /// write syscall
-const SYSCALL_WRITE: usize = 64;
+pub const SYSCALL_WRITE: usize = 64;
 /// exit syscall
-const SYSCALL_EXIT: usize = 93;
+pub const SYSCALL_EXIT: usize = 93;
 /// yield syscall
-const SYSCALL_YIELD: usize = 124;
+pub const SYSCALL_YIELD: usize = 124;
 /// gettime syscall
-const SYSCALL_GET_TIME: usize = 169;
+pub const SYSCALL_GET_TIME: usize = 169;
 /// trace syscall
-const SYSCALL_TRACE: usize = 410;
+pub const SYSCALL_TRACE: usize = 410;
+
+use lazy_static::{lazy_static};
+
+lazy_static! {
+    pub static ref SYSCALL_NUM: crate::sync::UPSafeCell<SyscallNum> = unsafe { crate::sync::UPSafeCell::new(SyscallNum::new()) };
+}
 
 mod fs;
 mod process;
@@ -29,6 +37,7 @@ use process::*;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
+    SYSCALL_NUM.exclusive_access().add_syscall_num(syscall_id);
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),
