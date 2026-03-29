@@ -23,10 +23,14 @@ pub const SYSCALL_GET_TIME: usize = 169;
 /// trace syscall
 pub const SYSCALL_TRACE: usize = 410;
 
+use crate::config::MAX_APP_NUM;
+use crate::task::TASK_MANAGER;
 use lazy_static::{lazy_static};
 
 lazy_static! {
-    pub static ref SYSCALL_NUM: crate::sync::UPSafeCell<SyscallNum> = unsafe { crate::sync::UPSafeCell::new(SyscallNum::new()) };
+    pub static ref SYSCALL_NUM: crate::sync::UPSafeCell<[SyscallNum; MAX_APP_NUM]> = unsafe {
+        crate::sync::UPSafeCell::new([SyscallNum::new(); MAX_APP_NUM])
+    };
 }
 
 mod fs;
@@ -37,7 +41,8 @@ use process::*;
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
-    SYSCALL_NUM.exclusive_access().add_syscall_num(syscall_id);
+    let current = TASK_MANAGER.current_task();
+    SYSCALL_NUM.exclusive_access()[current].add_syscall_num(syscall_id);
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),

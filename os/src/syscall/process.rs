@@ -3,7 +3,7 @@ use crate::{
     task::{exit_current_and_run_next, suspend_current_and_run_next},
     timer::get_time_us,
 };
-use super::{SYSCALL_WRITE, SYSCALL_EXIT, SYSCALL_YIELD, SYSCALL_GET_TIME, SYSCALL_TRACE, SYSCALL_NUM};
+use super::{SYSCALL_WRITE, SYSCALL_EXIT, SYSCALL_YIELD, SYSCALL_GET_TIME, SYSCALL_TRACE};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -12,6 +12,7 @@ pub struct TimeVal {
     pub usec: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct SyscallNum {
     pub write: usize,
     pub exit: usize,
@@ -102,7 +103,8 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
             0
         }
         2 => {
-            SYSCALL_NUM.exclusive_access().get_syscall_num(_id) as isize
+            let current = crate::task::TASK_MANAGER.current_task();
+            crate::syscall::SYSCALL_NUM.exclusive_access()[current].get_syscall_num(_id) as isize
         }
         _ => -1,
     }

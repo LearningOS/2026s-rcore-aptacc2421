@@ -72,6 +72,12 @@ lazy_static! {
 }
 
 impl TaskManager {
+    /// Return id of current running task.
+    pub fn current_task(&self) -> usize {
+        let inner = self.inner.exclusive_access();
+        inner.current_task
+    }
+
     /// Run the first task in task list.
     ///
     /// Generally, the first task in task list is an idle task (we call it zero process later).
