@@ -39,6 +39,15 @@ pub struct MemorySet {
     areas: Vec<MapArea>,
 }
 
+impl Clone for MemorySet {
+    fn clone(&self) -> Self {
+        Self {
+            page_table: self.page_table.clone(),
+            areas: self.areas.clone(),
+        }
+    }
+}
+
 impl MemorySet {
     /// Create a new empty `MemorySet`.
     pub fn new_bare() -> Self {
@@ -63,6 +72,46 @@ impl MemorySet {
             None,
         );
     }
+
+    
+    /// Try to insert a framed area.
+    ///
+    /// Returns `false` if physical frames are not enough.
+    /// On failure, any already mapped pages from this attempt will be rolled back.
+    pub fn try_insert_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> bool {
+        let mut map_area = MapArea::new(start_va, end_va, MapType::Framed, permission);
+        let pte_flags = PTEFlags::from_bits(permission.bits).unwrap();
+        let mut mapped_vpns: Vec<VirtPageNum> = Vec::new();
+
+        // Iterate without moving `map_area.vpn_range` (it is not `Copy`).
+        let start_vpn = map_area.vpn_range.get_start();
+        let end_vpn = map_area.vpn_range.get_end();
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            let frame = match frame_alloc() {
+                Some(frame) => frame,
+                None => {
+                    // Roll back already mapped pages.
+                    for mapped in mapped_vpns {
+                        self.page_table.unmap(mapped);
+                    }
+                    return false;
+                }
+            };
+            let ppn = frame.ppn;
+            map_area.data_frames.insert(vpn, frame);
+            self.page_table.map(vpn, ppn, pte_flags);
+            mapped_vpns.push(vpn);
+        }
+
+        self.areas.push(map_area);
+        true
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -233,6 +282,41 @@ impl MemorySet {
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.page_table.translate(vpn)
     }
+
+    /// Unmap a virtual page number range: `[start_vpn, end_vpn)`.
+    ///
+    /// Notes:
+    /// - This is mainly used by the simplified `munmap` syscall.
+    /// - Caller should ensure every page in the range is actually mapped
+    ///   (PTE.V == 1), otherwise `PageTable::unmap` may assert.
+    pub fn unmap_range(&mut self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) {
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            // If this page belongs to some framed MapArea, drop its frame tracker
+            // now so the physical frame can be reused.
+            for area in &mut self.areas {
+                let area_start = area.vpn_range.get_start();
+                let area_end = area.vpn_range.get_end();
+                if vpn >= area_start && vpn < area_end {
+                    if area.map_type == MapType::Framed {
+                        area.data_frames.remove(&vpn);
+                    }
+                    break;
+                }
+            }
+            self.page_table.unmap(vpn);
+        }
+    }
+
+    /// Unmap a framed area and remove its metadata from `areas`.
+    pub fn remove_framed_area(&mut self, start_vpn: VirtPageNum, end_vpn: VirtPageNum) {
+        self.unmap_range(start_vpn, end_vpn);
+        self.areas.retain(|area| {
+            !(area.map_type == MapType::Framed
+                && area.vpn_range.get_start() == start_vpn
+                && area.vpn_range.get_end() == end_vpn)
+        });
+    }
+
     /// shrink the area to new_end
     #[allow(unused)]
     pub fn shrink_to(&mut self, start: VirtAddr, new_end: VirtAddr) -> bool {
@@ -264,6 +348,7 @@ impl MemorySet {
     }
 }
 /// map area structure, controls a contiguous piece of virtual memory
+#[derive(Clone)]
 pub struct MapArea {
     vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,

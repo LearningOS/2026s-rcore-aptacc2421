@@ -79,6 +79,16 @@ pub struct PageTable {
 }
 
 /// Assume that it won't oom when creating/mapping.
+impl Clone for PageTable {
+    fn clone(&self) -> Self {
+        Self {
+            root_ppn: self.root_ppn,
+            frames: self.frames.clone(),
+        }
+    }
+}
+
+/// Assume that it won't oom when creating/mapping.
 impl PageTable {
     /// Create a new page table
     pub fn new() -> Self {

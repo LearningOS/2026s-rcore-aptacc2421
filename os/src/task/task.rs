@@ -8,6 +8,9 @@ use crate::trap::{trap_handler, TrapContext};
 
 /// The task control block (TCB) of a task.
 pub struct TaskControlBlock {
+    /// application id (for kernel stack location)
+    pub app_id: usize,
+
     /// Save task context
     pub task_cx: TaskContext,
 
@@ -28,6 +31,25 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// System call counts
+    pub syscall_counts: [usize; 512], // 假设系统调用 ID 不超过 511
+}
+
+impl Clone for TaskControlBlock {
+    fn clone(&self) -> Self {
+        Self {
+            app_id: self.app_id,
+            task_cx: self.task_cx,
+            task_status: self.task_status,
+            memory_set: self.memory_set.clone(),
+            trap_cx_ppn: self.trap_cx_ppn,
+            base_size: self.base_size,
+            heap_bottom: self.heap_bottom,
+            program_brk: self.program_brk,
+            syscall_counts: self.syscall_counts,
+        }
+    }
 }
 
 impl TaskControlBlock {
@@ -56,6 +78,7 @@ impl TaskControlBlock {
             MapPermission::R | MapPermission::W,
         );
         let task_control_block = Self {
+            app_id,
             task_status,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             memory_set,
@@ -63,6 +86,7 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            syscall_counts: [0; 512], // 初始化系统调用计数为 0
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -95,6 +119,19 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    /// release this task's user-space pages and kernel stack when it exits
+    pub fn cleanup(&mut self) {
+        // drop all user-space mapped frames and page tables
+        self.memory_set = MemorySet::new_bare();
+
+        // unmap this task's kernel stack from kernel space
+        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(self.app_id);
+        let start = VirtAddr(kernel_stack_bottom).floor();
+        let end = VirtAddr(kernel_stack_top).ceil();
+        let mut kern_space = KERNEL_SPACE.exclusive_access();
+        kern_space.remove_framed_area(start, end);
     }
 }
 

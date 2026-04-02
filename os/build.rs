@@ -25,6 +25,10 @@ fn insert_app_data() -> Result<()> {
         .collect();
     apps.sort();
 
+    if apps.is_empty() {
+        panic!("no apps found in {} - please run user build with a valid CHAPTER/TEST", TARGET_PATH);
+    }
+
     writeln!(
         f,
         r#"

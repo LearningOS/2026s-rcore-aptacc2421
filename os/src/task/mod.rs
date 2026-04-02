@@ -100,6 +100,7 @@ impl TaskManager {
     fn mark_current_exited(&self) {
         let mut inner = self.inner.exclusive_access();
         let cur = inner.current_task;
+        inner.tasks[cur].cleanup();
         inner.tasks[cur].task_status = TaskStatus::Exited;
     }
 
@@ -202,3 +203,14 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
 }
+
+/// Get the current 'Running' task.
+pub fn current_task() -> Option<&'static mut TaskControlBlock> {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let current_task_id = inner.current_task;
+    // 这里返回一个可变引用，注意生命周期
+    unsafe {
+        Some(&mut *(&mut inner.tasks[current_task_id] as *mut TaskControlBlock))
+    }
+}
+
