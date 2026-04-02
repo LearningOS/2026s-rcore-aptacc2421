@@ -171,12 +171,28 @@ impl PageTable {
 pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
     let page_table = PageTable::from_token(token);
     let mut start = ptr as usize;
-    let end = start + len;
+    let end = match start.checked_add(len) {
+        Some(e) => e,
+        None => return Vec::new(),
+    };
     let mut v = Vec::new();
     while start < end {
         let start_va = VirtAddr::from(start);
+        if !start_va.is_user_vaddr() {
+            return Vec::new();
+        }
+
         let mut vpn = start_va.floor();
-        let ppn = page_table.translate(vpn).unwrap().ppn();
+        let pte = match page_table.translate(vpn) {
+            Some(pte) => pte,
+            None => return Vec::new(),
+        };
+
+        if !pte.is_valid() || !pte.flags().contains(PTEFlags::U) {
+            return Vec::new();
+        }
+
+        let ppn = pte.ppn();
         vpn.step();
         let mut end_va: VirtAddr = vpn.into();
         end_va = end_va.min(VirtAddr::from(end));

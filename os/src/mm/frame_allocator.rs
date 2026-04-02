@@ -6,7 +6,11 @@ use crate::config::MEMORY_END;
 use crate::sync::UPSafeCell;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use lazy_static::*;
+
+static FRAME_ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+static FRAME_DEALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// tracker for physical page frame allocation and deallocation
 #[derive(Clone)]
@@ -35,6 +39,8 @@ impl Debug for FrameTracker {
 
 impl Drop for FrameTracker {
     fn drop(&mut self) {
+        FRAME_DEALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
+        println!("[frame] drop ppn {:#x} (dealloc count={})", self.ppn.0, FRAME_DEALLOC_COUNT.load(Ordering::SeqCst));
         frame_dealloc(self.ppn);
     }
 }
@@ -67,14 +73,19 @@ impl FrameAllocator for StackFrameAllocator {
         }
     }
     fn alloc(&mut self) -> Option<PhysPageNum> {
-        if let Some(ppn) = self.recycled.pop() {
-            Some(ppn.into())
+        let result: Option<PhysPageNum> = if let Some(ppn) = self.recycled.pop() {
+            Some::<PhysPageNum>(ppn.into())
         } else if self.current == self.end {
             None
         } else {
             self.current += 1;
             Some((self.current - 1).into())
+        };
+        if let Some(ppn) = result {
+            let c = FRAME_ALLOC_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+            println!("[frame] alloc ppn {:#x} (alloc count={})", ppn.0, c);
         }
+        result
     }
     fn dealloc(&mut self, ppn: PhysPageNum) {
         let ppn = ppn.0;

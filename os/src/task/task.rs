@@ -121,17 +121,20 @@ impl TaskControlBlock {
         }
     }
 
-    /// release this task's user-space pages and kernel stack when it exits
+    /// release this task's pages and kernel stack when it exits
     pub fn cleanup(&mut self) {
-        // drop all user-space mapped frames and page tables
-        self.memory_set = MemorySet::new_bare();
+        println!("[kernel] cleanup task {}: drop memory_set + unmap kernel stack", self.app_id);
 
-        // unmap this task's kernel stack from kernel space
+        // drop all user-space mapped frames and page tables
+        let old = core::mem::replace(&mut self.memory_set, MemorySet::new_bare());
+        drop(old); // 触发 user 映射与页表 frame 回收
+
+        // release this task kernel stack in KERNEL_SPACE
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(self.app_id);
         let start = VirtAddr(kernel_stack_bottom).floor();
         let end = VirtAddr(kernel_stack_top).ceil();
-        let mut kern_space = KERNEL_SPACE.exclusive_access();
-        kern_space.remove_framed_area(start, end);
+        let mut kernel_space = KERNEL_SPACE.exclusive_access();
+        kernel_space.remove_framed_area(start, end);
     }
 }
 

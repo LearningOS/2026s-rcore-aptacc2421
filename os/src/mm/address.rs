@@ -113,6 +113,16 @@ impl VirtAddr {
     pub fn aligned(&self) -> bool {
         self.page_offset() == 0
     }
+
+    /// Check whether this virtual address belongs to user-space range.
+    pub fn is_user_vaddr(&self) -> bool {
+        self.0 < (1 << (VA_WIDTH_SV39 - 1))
+    }
+
+    /// Check whether this virtual address belongs to kernel-space range.
+    pub fn is_kernel_vaddr(&self) -> bool {
+        !self.is_user_vaddr()
+    }
 }
 impl From<VirtAddr> for VirtPageNum {
     fn from(v: VirtAddr) -> Self {
