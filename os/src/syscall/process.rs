@@ -32,7 +32,7 @@ pub fn sys_yield() -> isize {
 /// get time with second and microsecond
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    println!("kernel: sys_get_time");
+    //println!("kernel: sys_get_time");
     if _ts.is_null() {
         return -1;
     }
@@ -72,7 +72,7 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 
 pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     trace!("kernel: sys_trace");
-    println!("kernel: sys_trace: request={}, id={}, data={}", _trace_request, _id, _data);
+    //println!("kernel: sys_trace: request={}, id={}, data={}", _trace_request, _id, _data);
     match _trace_request {
         0 => {
             let buffers = translated_byte_buffer(current_user_token(), _id as *const u8, 1);
@@ -109,7 +109,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
 
 pub fn sys_mmap(_start: usize, _len: usize, _prot: usize) -> isize {
     trace!("kernal: sys_mmap: start={:#x}, len={:#x}, prot={:#x}", _start, _len, _prot);
-    println!("kernel: sys_mmap: start={:#x}, len={:#x}, prot={:#x}", _start, _len, _prot);
+    // println!("kernel: sys_mmap: start={:#x}, len={:#x}, prot={:#x}", _start, _len, _prot);
     use crate::config::PAGE_SIZE;
     use crate::mm::{MapPermission, VirtAddr, StepByOne};
 
@@ -167,7 +167,7 @@ pub fn sys_mmap(_start: usize, _len: usize, _prot: usize) -> isize {
 
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!("kernel: sys_munmap: start={:#x}, len={:#x}", _start, _len);
-    println!("kernel: sys_munmap: start={:#x}, len={:#x}", _start, _len);
+    // println!("kernel: sys_munmap: start={:#x}, len={:#x}", _start, _len);
     use crate::config::PAGE_SIZE;
     use crate::mm::{VirtAddr, StepByOne};
 

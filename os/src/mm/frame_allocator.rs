@@ -40,7 +40,7 @@ impl Debug for FrameTracker {
 impl Drop for FrameTracker {
     fn drop(&mut self) {
         FRAME_DEALLOC_COUNT.fetch_add(1, Ordering::SeqCst);
-        println!("[frame] drop ppn {:#x} (dealloc count={})", self.ppn.0, FRAME_DEALLOC_COUNT.load(Ordering::SeqCst));
+        //println!("[frame] drop ppn {:#x} (dealloc count={})", self.ppn.0, FRAME_DEALLOC_COUNT.load(Ordering::SeqCst));
         frame_dealloc(self.ppn);
     }
 }
@@ -81,9 +81,9 @@ impl FrameAllocator for StackFrameAllocator {
             self.current += 1;
             Some((self.current - 1).into())
         };
-        if let Some(ppn) = result {
-            let c = FRAME_ALLOC_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
-            println!("[frame] alloc ppn {:#x} (alloc count={})", ppn.0, c);
+        if let Some(_ppn) = result {
+            let _c = FRAME_ALLOC_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
+            //println!("[frame] alloc ppn {:#x} (alloc count={})", ppn.0, c);
         }
         result
     }

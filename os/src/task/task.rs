@@ -123,7 +123,7 @@ impl TaskControlBlock {
 
     /// release this task's pages and kernel stack when it exits
     pub fn cleanup(&mut self) {
-        println!("[kernel] cleanup task {}: drop memory_set + unmap kernel stack", self.app_id);
+        //println!("[kernel] cleanup task {}: drop memory_set + unmap kernel stack", self.app_id);
 
         // drop all user-space mapped frames and page tables
         let old = core::mem::replace(&mut self.memory_set, MemorySet::new_bare());
