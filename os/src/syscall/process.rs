@@ -41,6 +41,7 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
         current_user_token(),
         _ts as *const u8,
         core::mem::size_of::<TimeVal>(),
+        true,
     );
     if buffers.is_empty() {
         return -1;
@@ -75,7 +76,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
     //println!("kernel: sys_trace: request={}, id={}, data={}", _trace_request, _id, _data);
     match _trace_request {
         0 => {
-            let buffers = translated_byte_buffer(current_user_token(), _id as *const u8, 1);
+            let buffers = translated_byte_buffer(current_user_token(), _id as *const u8, 1, false);
             if let Some(page) = buffers.first() {
                 *page.get(0).unwrap_or(&0) as isize
             } else {
@@ -83,7 +84,7 @@ pub fn sys_trace(_trace_request: usize, _id: usize, _data: usize) -> isize {
             }
         }
         1 => {
-            let mut buffers = translated_byte_buffer(current_user_token(), _id as *mut u8, 1);
+            let mut buffers = translated_byte_buffer(current_user_token(), _id as *mut u8, 1, true);
             if let Some(page) = buffers.first_mut() {
                 if let Some(byte) = page.get_mut(0) {
                     *byte = _data as u8;

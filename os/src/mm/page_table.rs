@@ -168,7 +168,12 @@ impl PageTable {
 }
 
 /// Translate&Copy a ptr[u8] array with LENGTH len to a mutable u8 Vec through page table
-pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
+pub fn translated_byte_buffer(
+    token: usize,
+    ptr: *const u8,
+    len: usize,
+    require_write: bool,
+) -> Vec<&'static mut [u8]> {
     let page_table = PageTable::from_token(token);
     let mut start = ptr as usize;
     let end = match start.checked_add(len) {
@@ -190,6 +195,16 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
 
         if !pte.is_valid() || !pte.flags().contains(PTEFlags::U) {
             return Vec::new();
+        }
+
+        if require_write {
+            if !pte.flags().contains(PTEFlags::W) {
+                return Vec::new();
+            }
+        } else {
+            if !pte.flags().contains(PTEFlags::R) {
+                return Vec::new();
+            }
         }
 
         let ppn = pte.ppn();
