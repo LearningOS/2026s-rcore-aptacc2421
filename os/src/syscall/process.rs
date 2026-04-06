@@ -105,30 +105,141 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+/* 
+ * Note: This syscall shoud let ts = current time, and ignore tz for now.
+ *       ts contains two fields: sec and usec, which are second and microsecond respectively.
+ *       If the syscall is successfully executed, return 0. Otherwise, return -1.
+ *
+ * TODO: You should get current task first, and then write info in the address of ts.
+ *       Just call the interface of current task to write info in the address of ts.
+ *       You can get time by calling 'get_time_ms()' in 'timer.rs', and then convert it to second and microsecond.
+ */
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().pid.0
     );
-    -1
+    //-1
+    let usec = crate::timer::get_time_ms();
+    let sec = usec / 1000000;
+    *translated_refmut(current_user_token(), ts) = TimeVal { sec, usec };
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+/*
+ * sys_mmap - Allocate anonymous memory and map it to a virtual address.
+ *
+ * Arguments:
+ *   start - Virtual start address. Must be page-aligned.
+ *   len   - Size in bytes. May be zero.
+ *   prot  - Memory protection bits:
+ *           - Bit 0: readable
+ *           - Bit 1: writable
+ *           - Bit 2: executable
+ *           All other bits must be zero.
+ *
+ * Behavior:
+ *   Allocates physical memory of `len` bytes (rounded up to page size) and
+ *   maps it to the virtual range [start, start + round_up(len)).
+ *   The mapping is anonymous (not backed by a file).
+ *   Page permissions are set according to prot.
+ *
+ * Returns:
+ *   0 on success, -1 on error.
+ *
+ * Errors:
+ *   - start is not page-aligned.
+ *   - prot has any bits set outside bits 0-2.
+ *   - (prot & 0x7) == 0  (no permission requested).
+ *   - Any page in [start, start + round_up(len)) is already mapped.
+ *   - Insufficient physical memory.
+ *
+ * Note:
+ *   The implementation may ignore page allocation failures and does not need
+ *   to handle partial cleanup (simplified for experiment).
+ * 
+ * Notice: if Any functions not belong to syscall should call interface of other module. 
+ */
+pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
+        "kernel:pid[{}] sys_mmap",
+        crate::task::current_task().unwrap().pid.0
     );
-    -1
+    //-1
+    if !crate::mm::is_aligned_to_page_size(start) {
+        return -1;
+    }
+    if prot & !0x7 != 0 || prot & 0x7 == 0 {
+        return -1;
+    }
+    if len == 0 {
+        return 0;
+    }
+    use crate::mm::VirtAddr;
+    use crate::mm::MapPermission;
+    let start_va = VirtAddr::from(start);
+    let end_va = VirtAddr::from(start + len);
+
+    let mut permission = MapPermission::empty();
+    if prot & 0x1 != 0 {
+        permission |= MapPermission::R;
+    }
+    if prot & 0x2 != 0 {
+        permission |= MapPermission::W;
+    }
+    if prot & 0x4 != 0 {
+        permission |= MapPermission::X;
+    }
+    permission |= MapPermission::U;
+
+    (crate::mm::alloc_user_pages(start_va, end_va, permission)) as isize
 }
 
 /// YOUR JOB: Implement munmap.
+/*
+ * sys_munmap - Unmap anonymous memory previously mapped by mmap.
+ * Syscall ID: 223 (example)
+ *
+ * Arguments:
+ *   start - Virtual start address. Must be page-aligned.
+ *   len   - Size in bytes. May be zero.
+ *
+ * Behavior:
+ *   Unmaps the virtual range [start, start + round_up(len)) and frees the
+ *   underlying physical pages. The range must exactly match a region created
+ *   by a previous sys_mmap call.
+ *
+ * Returns:
+ *   0 on success, -1 on error.
+ *
+ * Errors:
+ *   - start is not page-aligned.
+ *   - The specified range is not a currently mapped anonymous region
+ *     (exact match required in this simplified version).
+ *
+ * Note:
+ *   For simplicity, unmapping a partial region or merging/splitting regions
+ *   is not required.
+ */
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_munmap",
         current_task().unwrap().pid.0
     );
-    -1
+    //-1
+    use crate::mm::VirtAddr;
+
+    if !crate::mm::is_aligned_to_page_size(_start) {
+        return -1;
+    }
+    if _len == 0 {
+        return 0;
+    }
+    let start_va = VirtAddr::from(_start);
+    let end_va = VirtAddr::from(_start + _len);
+    (crate::mm::dealloc_user_pages(start_va, end_va)) as isize
+
 }
 
 /// change data segment size

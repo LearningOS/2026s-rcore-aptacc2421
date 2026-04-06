@@ -78,6 +78,45 @@ impl MemorySet {
             self.areas.remove(idx);
         }
     }
+
+    /// Try to insert a framed area.
+    ///
+    /// Returns -1 if physical frames are not enough.
+    /// On failure, any already mapped pages from this attempt will be rolled back.
+    pub fn try_insert_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> isize {
+        let mut map_area = MapArea::new(start_va, end_va, MapType::Framed, permission);
+        let pte_flags = PTEFlags::from_bits(permission.bits).unwrap();
+        let mut mapped_vpns: Vec<VirtPageNum> = Vec::new();
+
+        // Iterate without moving `map_area.vpn_range` (it is not `Copy`).
+        let start_vpn = map_area.vpn_range.get_start();
+        let end_vpn = map_area.vpn_range.get_end();
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            let frame = match frame_alloc() {
+                Some(frame) => frame,
+                None => {
+                    // Roll back already mapped pages.
+                    for mapped in mapped_vpns {
+                        self.page_table.unmap(mapped);
+                    }
+                    return -1;
+                }
+            };
+            let ppn = frame.ppn;
+            map_area.data_frames.insert(vpn, frame);
+            self.page_table.map(vpn, ppn, pte_flags);
+            mapped_vpns.push(vpn);
+        }
+
+        self.areas.push(map_area);
+        0
+    }
+
     /// Add a new MapArea into this MemorySet.
     /// Assuming that there are no conflicts in the virtual address
     /// space.
@@ -417,6 +456,69 @@ impl MapArea {
             }
             current_vpn.step();
         }
+    }
+}
+
+/*
+ * A helper function to 'sys_mmap' from start_va to end_va, with permission perm.
+ * Return 0 if success, or -1 if failed.
+ */
+/// docs for sys_mmap:
+ pub fn alloc_user_pages(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission) -> isize {
+    if start_va >= end_va {
+        return -1;
+    }
+    let start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+
+    if let Some(task) = crate::task::current_task() {
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if let Some(pte) = task.inner_exclusive_access().memory_set.translate(vpn) {
+                if pte.is_valid() {
+                    return -1;
+                }
+            }
+        }
+
+        // 插入新的映射区域
+        task
+        .inner_exclusive_access()
+        .memory_set
+        .try_insert_framed_area(start_va, end_va, permission)
+    } else {
+        -1
+    }
+ }
+
+/*
+ * YOUR JOB: Implement munmap.
+ * Unmap the user pages from start_va to end_va.
+ * Return 0 if success, or -1 if failed.
+ */
+/// docs for sys_munmap:
+pub fn dealloc_user_pages(start_va: VirtAddr, end_va: VirtAddr) -> isize {
+    if start_va >= end_va {
+        return -1;
+    }
+    let start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+
+    if let Some(task) = crate::task::current_task() {
+        for vpn in VPNRange::new(start_vpn, end_vpn) {
+            if let Some(pte) = task.inner_exclusive_access().memory_set.translate(vpn) {
+                if !pte.is_valid() {
+                    return -1;
+                }
+            } else {
+                return -1;
+            }
+        }
+
+        // 移除映射区域
+        task.inner_exclusive_access().memory_set.remove_area_with_start_vpn(start_vpn);
+        0
+    } else {
+        -1
     }
 }
 
