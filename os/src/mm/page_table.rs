@@ -213,3 +213,9 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .unwrap()
         .get_mut()
 }
+
+
+/// Judge if the start position is aligned to the page size
+pub fn is_aligned_to_page_size(start: usize) -> bool {
+    start % crate::config::PAGE_SIZE == 0
+}
