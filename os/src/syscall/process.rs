@@ -254,12 +254,45 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
+/*
+ * sys_spawn - Create a new child process to execute the target program.
+ *
+ * Arguments:
+ *   path - Pointer to a null-terminated path string of the program to execute.
+ *
+ * Behavior:
+ *   Creates a new child process that loads and runs the executable specified
+ *   by `path`. Returns the child process ID to the parent.
+ *
+ * Returns:
+ *   Child process ID on success, -1 on error.
+ *
+ * Errors:
+ *   - Invalid or inaccessible filename (e.g., path does not exist, cannot be read).
+ *   - Insufficient resources to create a new process.
+ *   - Other process creation failures.
+ *
+ * Note:
+ *   The exact behavior (e.g., copying address space, using copy-on-write,
+ *   or loading a new program image) follows the standard spawn semantics
+ *   as defined in the experiment.
+ */
 pub fn sys_spawn(_path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
     );
-    -1
+    //-1
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let task = Arc::new(crate::task::TaskControlBlock::new(data));
+        let pid = task.getpid();
+        add_task(task);
+        pid as isize  
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
