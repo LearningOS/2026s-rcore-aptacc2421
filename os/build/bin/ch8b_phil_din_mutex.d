@@ -1,0 +1,1 @@
+/mnt/user/target/riscv64gc-unknown-none-elf/release/ch8b_phil_din_mutex: /mnt/user/src/bin/ch8b_phil_din_mutex.rs /mnt/user/src/console.rs /mnt/user/src/lang_items.rs /mnt/user/src/lib.rs /mnt/user/src/syscall.rs

@@ -18,6 +18,9 @@ mod id;
 mod manager;
 mod processor;
 mod switch;
+/// The priority info of a process, which is used in stride scheduling
+pub mod priority;  
+
 #[allow(clippy::module_inception)]
 mod task;
 

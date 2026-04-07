@@ -23,7 +23,15 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        // find the process with the smallest stride
+        let min_idx = self.ready_queue
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, task)| task.inner_exclusive_access().priority_info.stride)
+            .map(|(idx, _)| idx);
+    
+        // 第二步：根据索引移除
+        min_idx.and_then(|idx| self.ready_queue.remove(idx))
     }
 }
 

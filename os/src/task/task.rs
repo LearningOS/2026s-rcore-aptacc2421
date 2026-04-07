@@ -1,6 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
+use super::priority::PriorityInfo;
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
@@ -68,6 +69,9 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Priority info
+    pub priority_info: PriorityInfo,
 }
 
 impl TaskControlBlockInner {
@@ -84,6 +88,13 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+}
+
+impl TaskControlBlockInner {
+    /// update stride when process is scheduled
+    pub fn update_stride(&mut self) {
+        self.priority_info.update_stride();
     }
 }
 
@@ -118,6 +129,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority_info: PriorityInfo::new(16),
                 })
             },
         };
@@ -191,6 +203,7 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority_info: PriorityInfo::new(16),
                 })
             },
         });
