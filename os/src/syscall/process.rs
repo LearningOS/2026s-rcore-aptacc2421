@@ -105,23 +105,15 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-/* 
- * Note: This syscall shoud let ts = current time, and ignore tz for now.
- *       ts contains two fields: sec and usec, which are second and microsecond respectively.
- *       If the syscall is successfully executed, return 0. Otherwise, return -1.
- *
- * TODO: You should get current task first, and then write info in the address of ts.
- *       Just call the interface of current task to write info in the address of ts.
- *       You can get time by calling 'get_time_ms()' in 'timer.rs', and then convert it to second and microsecond.
- */
 pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_get_time",
         current_task().unwrap().pid.0
     );
     //-1
-    let usec = crate::timer::get_time_ms();
-    let sec = usec / 1000000;
+    let total_us = crate::timer::get_time_us();
+    let sec = total_us / 1_000_000;
+    let usec = total_us % 1_000_000;
     *translated_refmut(current_user_token(), ts) = TimeVal { sec, usec };
     0
 }
