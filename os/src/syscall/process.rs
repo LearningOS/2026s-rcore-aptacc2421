@@ -278,18 +278,31 @@ pub fn sys_sbrk(size: i32) -> isize {
  *   as defined in the experiment.
  */
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn",
-        current_task().unwrap().pid.0
-    );
-    //-1
-    let token = current_user_token();
-    let path = translated_str(token, _path);
-    if let Some(data) = get_app_data_by_name(path.as_str()) {
-        let task = Arc::new(crate::task::TaskControlBlock::new(data));
-        let pid = task.getpid();
-        add_task(task);
-        pid as isize  
+    if let Some(current_task) = current_task() {
+        trace!("kernel:pid[{}] sys_spawn", current_task.pid.0);
+        let token = current_user_token();
+        let path = translated_str(token, _path);
+        if let Some(data) = get_app_data_by_name(path.as_str()) {
+            let task = Arc::new(crate::task::TaskControlBlock::new(data));
+            let pid = task.getpid();
+
+            {
+                // 1. 父进程 -> 子进程
+                let mut parent_inner = current_task.inner_exclusive_access();
+                parent_inner.children.push(task.clone());
+                drop(parent_inner);
+                    
+                // 2. 子进程 -> 父进程
+                let mut child_inner = task.inner_exclusive_access();
+                child_inner.parent = Some(Arc::downgrade(&current_task));
+                drop(child_inner);
+            }
+
+            add_task(task);
+            pid as isize  
+        } else {
+            -1
+        }
     } else {
         -1
     }
