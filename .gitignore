@@ -5,7 +5,6 @@
 .idea
 Cargo.lock
 target
-os/src/link_app.S
 os/last-*
 os/Cargo.lock
 os/.gdb_history
@@ -20,4 +19,3 @@ ci-user/
 user/
 os/vendor/os/build/
 os/build/
-os/src/link_app.S
