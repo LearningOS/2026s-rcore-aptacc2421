@@ -1,6 +1,6 @@
 use super::{
     block_cache_sync_all, get_block_cache, BlockDevice, DirEntry, DiskInode, DiskInodeType,
-    EasyFileSystem, DIRENT_SZ,
+    EasyFileSystem, BLOCK_SZ, DIRENT_SZ,
 };
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -73,7 +73,7 @@ impl Inode {
             })
         })
     }
-    /// Increase the size of a disk inode
+    /// Increase the size of a disk inode (also shrinks when `new_size` is smaller).
     fn increase_size(
         &self,
         new_size: u32,
@@ -81,6 +81,30 @@ impl Inode {
         fs: &mut MutexGuard<EasyFileSystem>,
     ) {
         if new_size < disk_inode.size {
+            let old_db = disk_inode.data_blocks();
+            let new_db = (new_size as usize + BLOCK_SZ - 1) / BLOCK_SZ;
+            let new_db = new_db as u32;
+            if new_db < old_db {
+                // Must match `INODE_DIRECT_COUNT` in layout.rs (directory shrink for unlink).
+                const INODE_DIRECT_COUNT: u32 = 28;
+                assert!(
+                    old_db <= INODE_DIRECT_COUNT,
+                    "shrink past direct blocks not supported"
+                );
+                let mut free_list = Vec::new();
+                for i in new_db..old_db {
+                    free_list.push(disk_inode.get_block_id(i, &self.block_device));
+                }
+                disk_inode.size = new_size;
+                for i in new_db as usize..old_db as usize {
+                    disk_inode.direct[i] = 0;
+                }
+                for bid in free_list {
+                    fs.dealloc_data(bid);
+                }
+            } else {
+                disk_inode.size = new_size;
+            }
             return;
         }
         let blocks_needed = disk_inode.blocks_num_needed(new_size);
