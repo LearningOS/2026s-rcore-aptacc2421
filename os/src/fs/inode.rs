@@ -73,6 +73,16 @@ pub fn list_apps() {
     println!("**************/");
 }
 
+/// Add a linker in DirEntry points to the same inode as src file, and increase nlink of the inode by 1
+pub fn link_file(old_name: &str, new_name: &str) -> bool {
+    ROOT_INODE.link(old_name, new_name)
+}
+
+/// Remove the file and decrease nlink of the inode by 1, if nlink becomes 0, clear the data in the inode
+pub fn unlink_file(name: &str) -> bool {
+    ROOT_INODE.unlink(name)
+}
+
 bitflags! {
     ///  The flags argument to the open() system call is constructed by ORing together zero or more of the following values:
     pub struct OpenFlags: u32 {
