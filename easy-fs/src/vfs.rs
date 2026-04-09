@@ -183,4 +183,29 @@ impl Inode {
         });
         block_cache_sync_all();
     }
+
+    /// Get the stat of current inode
+    /* dev: u64, // device id
+    ino: u64, // inode number
+    mode: u32, // 2 if file, 1 if dir, 0 if null
+    nlink: u32, // number of links
+    pad: [u64; 7], // padding for future use 
+    // */
+    pub fn stat(&self) -> (u64, u64, u32, u32) {
+        let _fs = self.fs.lock();
+        self.read_disk_inode(|disk_inode| {
+            (
+                0, // device id, not implemented
+                self.block_id as u64, // inode number
+                if disk_inode.is_file() {
+                    2
+                } else if disk_inode.is_dir() {
+                    1
+                } else {
+                    0
+                }, // mode
+                disk_inode.nlink, // number of links
+            )
+        })
+    }
 }
