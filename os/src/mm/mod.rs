@@ -22,6 +22,8 @@ pub use page_table::{
     translated_byte_buffer, translated_ref, translated_refmut, translated_str, PageTable,
     PageTableEntry, UserBuffer, UserBufferIterator,
 };
+pub use page_table::is_aligned_to_page_size;
+pub use memory_set::{alloc_user_pages, dealloc_user_pages};
 
 /// initiate heap allocator, frame allocator and kernel space
 pub fn init() {

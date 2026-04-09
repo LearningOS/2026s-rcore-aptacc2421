@@ -274,6 +274,7 @@ pub fn sys_spawn(_path: *const u8) -> isize {
         trace!("kernel:pid[{}] sys_spawn", current_task.pid.0);
         let token = current_user_token();
         let path = translated_str(token, _path);
+        use crate::loader::get_app_data_by_name;
         if let Some(data) = get_app_data_by_name(path.as_str()) {
             let task = Arc::new(crate::task::TaskControlBlock::new(data));
             let pid = task.getpid();

@@ -275,6 +275,7 @@ impl Iterator for UserBufferIterator {
             Some(r)
         }
     }
+}
 
 /// Judge if the start position is aligned to the page size
 pub fn is_aligned_to_page_size(start: usize) -> bool {
