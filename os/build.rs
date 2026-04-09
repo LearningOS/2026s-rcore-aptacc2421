@@ -1,3 +1,6 @@
+static TARGET_PATH: &str = "../user/target/riscv64gc-unknown-none-elf/release/";
+
 fn main() {
-    // 使用仓库中静态的 src/link_app.S，不自动生成
+    println!("cargo:rerun-if-changed=../user/src/");
+    println!("cargo:rerun-if-changed={}", TARGET_PATH);
 }
