@@ -20,3 +20,4 @@ ci-user/
 user/
 os/vendor/os/build/
 os/build/
+os/src/link_app.S
