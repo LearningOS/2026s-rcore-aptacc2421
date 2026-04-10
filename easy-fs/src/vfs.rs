@@ -73,7 +73,7 @@ impl Inode {
             })
         })
     }
-    /// Increase the size of a disk inode (also shrinks when `new_size` is smaller).
+    /// Grow the on-disk inode when `new_size >= disk_inode.size`.
     fn increase_size(
         &self,
         new_size: u32,
@@ -81,30 +81,6 @@ impl Inode {
         fs: &mut MutexGuard<EasyFileSystem>,
     ) {
         if new_size < disk_inode.size {
-            let old_db = disk_inode.data_blocks();
-            let new_db = (new_size as usize + BLOCK_SZ - 1) / BLOCK_SZ;
-            let new_db = new_db as u32;
-            if new_db < old_db {
-                // Must match `INODE_DIRECT_COUNT` in layout.rs (directory shrink for unlink).
-                const INODE_DIRECT_COUNT: u32 = 28;
-                assert!(
-                    old_db <= INODE_DIRECT_COUNT,
-                    "shrink past direct blocks not supported"
-                );
-                let mut free_list = Vec::new();
-                for i in new_db..old_db {
-                    free_list.push(disk_inode.get_block_id(i, &self.block_device));
-                }
-                disk_inode.size = new_size;
-                for i in new_db as usize..old_db as usize {
-                    disk_inode.direct[i] = 0;
-                }
-                for bid in free_list {
-                    fs.dealloc_data(bid);
-                }
-            } else {
-                disk_inode.size = new_size;
-            }
             return;
         }
         let blocks_needed = disk_inode.blocks_num_needed(new_size);
@@ -113,6 +89,39 @@ impl Inode {
             v.push(fs.alloc_data());
         }
         disk_inode.increase_size(new_size, v, &self.block_device);
+    }
+
+    /// Shrink inode data (used by [`Inode::unlink`] on directories only). Not a generic truncate API.
+    fn shrink_disk_inode(
+        &self,
+        new_size: u32,
+        disk_inode: &mut DiskInode,
+        fs: &mut MutexGuard<EasyFileSystem>,
+    ) {
+        assert!(new_size <= disk_inode.size);
+        let old_db = disk_inode.data_blocks();
+        let new_db = ((new_size as usize + BLOCK_SZ - 1) / BLOCK_SZ) as u32;
+        if new_db < old_db {
+            // Must match `INODE_DIRECT_COUNT` in layout.rs.
+            const INODE_DIRECT_COUNT: u32 = 28;
+            assert!(
+                old_db <= INODE_DIRECT_COUNT,
+                "shrink past direct blocks not supported"
+            );
+            let mut free_list = Vec::new();
+            for i in new_db..old_db {
+                free_list.push(disk_inode.get_block_id(i, &self.block_device));
+            }
+            disk_inode.size = new_size;
+            for i in new_db as usize..old_db as usize {
+                disk_inode.direct[i] = 0;
+            }
+            for bid in free_list {
+                fs.dealloc_data(bid);
+            }
+        } else {
+            disk_inode.size = new_size;
+        }
     }
     /// Create inode under current inode by name
     pub fn create(&self, name: &str) -> Option<Arc<Inode>> {
@@ -289,13 +298,13 @@ impl Inode {
                         ),
                         DIRENT_SZ,
                     );
-                    if dirent.inode_id() as u32 != inode_id {
+                    // Hard links: several names share one inode_id; remove only this path.
+                    if dirent.name() != name {
                         dirents.push(dirent);
                     }
                 }
                 let new_size = dirents.len() * DIRENT_SZ;
-                // increase size
-                self.increase_size(new_size as u32, root_inode, &mut fs);
+                self.shrink_disk_inode(new_size as u32, root_inode, &mut fs);
                 // write back dirents
                 for (i, dirent) in dirents.into_iter().enumerate() {
                     root_inode.write_at(
