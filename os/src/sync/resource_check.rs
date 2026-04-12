@@ -1,122 +1,217 @@
 /*
-死锁检测
-目前的 mutex 和 semaphore 相关的系统调用不会分析资源的依赖情况，用户程序可能出现死锁。 我们希望在系统中加入死锁检测机制，当发现可能发生死锁时拒绝对应的资源获取请求。 一种检测死锁的算法如下：
-
-定义如下三个数据结构：
-
-可利用资源向量 Available ：含有 m 个元素的一维数组，每个元素代表可利用的某一类资源的数目， 其初值是该类资源的全部可用数目，其值随该类资源的分配和回收而动态地改变。 Available[j] = k，表示第 j 类资源的可用数量为 k。
-
-分配矩阵 Allocation：n * m 矩阵，表示每类资源已分配给每个线程的资源数。 Allocation[i,j] = g，则表示线程 i 当前己分得第 j 类资源的数量为 g。
-
-需求矩阵 Need：n * m 的矩阵，表示每个线程还需要的各类资源数量。 Need[i,j] = d，则表示线程 i 还需要第 j 类资源的数量为 d 。
-
-算法运行过程如下：
-
-设置两个向量: 工作向量 Work，表示操作系统可提供给线程继续运行所需的各类资源数目，它含有 m 个元素。初始时，Work = Available ；结束向量 Finish，表示系统是否有足够的资源分配给线程， 使之运行完成。初始时 Finish[0..n-1] = false，表示所有线程都没结束；当有足够资源分配给线程时， 设置 Finish[i] = true。
-
-从线程集合中找到一个能满足下述条件的线程
-
-1Finish[i] == false;
-2Need[i,j] <= Work[j];
-若找到，执行步骤 3，否则执行步骤 4。
-
-当线程 thr[i] 获得资源后，可顺利执行，直至完成，并释放出分配给它的资源，故应执行:
-
-1Work[j] = Work[j] + Allocation[i, j];
-2Finish[i] = true;
-跳转回步骤2
-
-如果 Finish[0..n-1] 都为 true，则表示系统处于安全状态；否则表示系统处于不安全状态，即出现死锁。
-
-出于兼容性和灵活性考虑，我们允许进程按需开启或关闭死锁检测功能。为此我们将实现一个新的系统调用： sys_enable_deadlock_detect 。
+死锁检测（银行家算法 + 动态 Max）
 */
 use alloc::vec;
 use alloc::vec::Vec;
-use alloc::boxed::Box;
 
-/// trait get single resource check info
-pub trait SingleResourceInfo {
-    fn get_available(&self) -> usize;
+/// Result of a resource acquire attempt for deadlock avoidance.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AcquireResult {
+    /// Shadow state already reflects the granted units (immediate grant).
+    Granted,
+    /// Safe to block; shadow reflects raised claim but not yet allocated.
+    WillWait,
 }
 
 pub struct ResourceCheck {
-    /// 可利用资源向量 Available ：含有 m 个元素的一维数组，每个元素代表可利用的某一类资源的数目， 其初值是该类资源的全部可用数目，其值随该类资源的分配和回收而动态地改变。 Available[j] = k，表示第 j 类资源的可用数量为 k。
+    /// Total instances per resource type (constant).
+    pub total: Vec<usize>,
     available: Vec<usize>,
-    /// 分配矩阵 Allocation：n * m 矩阵，表示每类资源已分配给每个线程的资源数。 Allocation[i,j] = g，则表示线程 i 当前己分得第 j 类资源的数量为 g。
     allocation: Vec<Vec<usize>>,
-    /// 需求矩阵 Need：n * m 的矩阵，表示每个线程还需要的各类资源数量。 Need[i,j] = d，则表示线程 i 还需要第 j 类资源的数量为 d 。
+    max_claim: Vec<Vec<usize>>,
     need: Vec<Vec<usize>>,
-    /// 结束向量 Finish，表示系统是否有足够的资源分配给线程， 使之运行完成。初始时 Finish[0..n-1] = false，表示所有线程都没结束；当有足够资源分配给线程时， 设置 Finish[i] = true。
-    finish: Vec<bool>,
 }
 
 impl ResourceCheck {
-    fn new(num_threads: usize, num_resources: usize, total_resources: Vec<Box<dyn SingleResourceInfo>>) -> Self {
+    pub fn empty() -> Self {
         Self {
-            available: total_resources.iter().map(|r| r.get_available()).collect(),
-            allocation: vec![vec![0; num_resources]; num_threads],
-            need: vec![vec![0; num_resources]; num_threads],
-            finish: vec![false; num_threads],
-        }  
+            total: Vec::new(),
+            available: Vec::new(),
+            allocation: Vec::new(),
+            max_claim: Vec::new(),
+            need: Vec::new(),
+        }
     }
 
-    fn request_resource(&mut self, thread_id: usize, request_id: usize, request_amount: usize) -> bool {
-        // 检查请求是否合法
-        if request_amount == 0 {
-            return true; // 请求为0，直接通过
+    /// `totals[j]` = total instances of resource j. Rows indexed by tid (0..num_threads).
+    pub fn new(num_threads: usize, totals: Vec<usize>) -> Self {
+        let m = totals.len();
+        let available = totals.clone();
+        Self {
+            total: totals,
+            available,
+            allocation: vec![vec![0; m]; num_threads],
+            max_claim: vec![vec![0; m]; num_threads],
+            need: vec![vec![0; m]; num_threads],
         }
-        if request_id >= self.available.len() || thread_id >= self.allocation.len() {
-            return false;
-        }
-        // 检查请求是否超过需求
-        if self.need[thread_id][request_id] < request_amount {
-            return false;
-        }
-        // 检查请求是否超过可用资源
-        if self.available[request_id] < request_amount {
-            return false;
-        }
-        // 模拟分配资源
-        self.available[request_id] -= request_amount;
-        self.allocation[thread_id][request_id] += request_amount;
-        self.need[thread_id][request_id] -= request_amount;
-
-        // 检测死锁
-        self.detect_deadlock()
     }
 
-    fn detect_deadlock(&mut self) -> bool {
-        // 初始化工作向量和结束向量
+    pub fn num_threads(&self) -> usize {
+        self.allocation.len()
+    }
+
+    pub fn num_resources(&self) -> usize {
+        self.total.len()
+    }
+
+    /// Ensure at least `n` thread rows exist.
+    pub fn ensure_threads(&mut self, n: usize) {
+        let m = self.num_resources();
+        while self.allocation.len() < n {
+            self.allocation.push(vec![0; m]);
+            self.max_claim.push(vec![0; m]);
+            self.need.push(vec![0; m]);
+        }
+    }
+
+    /// Append a new resource column. `total_j` is its instance count.
+    pub fn push_resource(&mut self, total_j: usize) {
+        self.total.push(total_j);
+        self.available.push(total_j);
+        for i in 0..self.allocation.len() {
+            self.allocation[i].push(0);
+            self.max_claim[i].push(0);
+            self.need[i].push(0);
+        }
+    }
+
+    fn recompute_need_row(&mut self, t: usize) {
+        let m = self.num_resources();
+        for j in 0..m {
+            self.need[t][j] = self.max_claim[t][j].saturating_sub(self.allocation[t][j]);
+        }
+    }
+
+    /// Banker's safety algorithm: true iff state is safe.
+    pub fn is_safe(&self) -> bool {
+        let m = self.num_resources();
+        let n = self.num_threads();
+        if m == 0 || n == 0 {
+            return true;
+        }
         let mut work = self.available.clone();
-        self.finish.iter_mut().for_each(|f| *f = false);
-
+        let mut finish = vec![false; n];
         loop {
             let mut found = false;
-            for i in 0..self.allocation.len() {
-                if !self.finish[i] && self.need[i].iter().zip(&work).all(|(n, w)| *n <= *w) {
-                    // 线程 i 可以完成
-                    for j in 0..work.len() {
+            for i in 0..n {
+                if finish[i] {
+                    continue;
+                }
+                let ok = (0..m).all(|j| self.need[i][j] <= work[j]);
+                if ok {
+                    for j in 0..m {
                         work[j] += self.allocation[i][j];
                     }
-                    self.finish[i] = true;
+                    finish[i] = true;
                     found = true;
                 }
             }
             if !found {
-                break; // 没有找到可完成的线程，退出循环
+                break;
             }
         }
-
-        // 检查是否所有线程都完成
-        self.finish.iter().all(|&f| f)
+        finish.iter().all(|&f| f)
     }
 
-    fn release_resource(&mut self, thread_id: usize, release_id: usize, release_amount: usize) {
-        // 模拟释放资源
-        if release_id < self.available.len() && thread_id < self.allocation.len() {
-            self.available[release_id] += release_amount;
-            self.allocation[thread_id][release_id] -= release_amount;
-            self.need[thread_id][release_id] += release_amount;
+    /// Try to acquire `k` units of resource `j` for thread `t`.
+    /// On success, either shadow already granted (`Granted`) or caller may block (`WillWait`).
+    /// On failure, state is unchanged and the request would be unsafe (deadlock).
+    pub fn try_acquire(&mut self, t: usize, j: usize, k: usize) -> Result<AcquireResult, ()> {
+        if k == 0 {
+            return Ok(AcquireResult::Granted);
+        }
+        if j >= self.total.len() || t >= self.allocation.len() {
+            return Err(());
+        }
+        if self.allocation[t][j] + k > self.total[j] {
+            return Err(());
+        }
+
+        let old_max = self.max_claim[t][j];
+        let new_max = old_max.max(self.allocation[t][j] + k);
+        self.max_claim[t][j] = new_max;
+        self.recompute_need_row(t);
+
+        if k <= self.available[j] {
+            self.available[j] -= k;
+            self.allocation[t][j] += k;
+            self.recompute_need_row(t);
+            if self.is_safe() {
+                return Ok(AcquireResult::Granted);
+            }
+            // rollback grant + max bump
+            self.allocation[t][j] -= k;
+            self.available[j] += k;
+            self.max_claim[t][j] = old_max;
+            self.recompute_need_row(t);
+            return Err(());
+        }
+
+        // Must wait: no grant yet
+        if self.is_safe() {
+            return Ok(AcquireResult::WillWait);
+        }
+        self.max_claim[t][j] = old_max;
+        self.recompute_need_row(t);
+        Err(())
+    }
+
+    /// After blocking wait, the kernel object has granted `k` units (pool was non-empty).
+    pub fn complete_acquire_after_wait(&mut self, t: usize, j: usize, k: usize) {
+        if k == 0 || j >= self.total.len() || t >= self.allocation.len() {
+            return;
+        }
+        assert!(self.available[j] >= k);
+        self.available[j] -= k;
+        self.allocation[t][j] += k;
+        self.recompute_need_row(t);
+    }
+
+    /// Thread `t` releases `k` units of resource `j` back to the pool.
+    pub fn release(&mut self, t: usize, j: usize, k: usize) {
+        if k == 0 || j >= self.total.len() || t >= self.allocation.len() {
+            return;
+        }
+        self.allocation[t][j] -= k;
+        self.available[j] += k;
+        self.recompute_need_row(t);
+    }
+
+    /// Mutex unlock handoff: lock goes from `from` to `to` without a free interval.
+    pub fn transfer_allocation(&mut self, j: usize, from: usize, to: usize, k: usize) {
+        if k == 0 || j >= self.total.len() {
+            return;
+        }
+        assert!(from < self.allocation.len() && to < self.allocation.len());
+        assert!(self.allocation[from][j] >= k);
+        self.allocation[from][j] -= k;
+        self.allocation[to][j] += k;
+        self.recompute_need_row(from);
+        self.recompute_need_row(to);
+    }
+
+    /// Semaphore `up` wakes `waiter`: one instance goes directly to the waiter.
+    pub fn semaphore_up_wake(&mut self, j: usize, waiter_tid: usize) {
+        if j >= self.total.len() || waiter_tid >= self.allocation.len() {
+            return;
+        }
+        self.allocation[waiter_tid][j] += 1;
+        self.recompute_need_row(waiter_tid);
+    }
+
+    /// Semaphore `up` with no waiter: increment available pool.
+    pub fn semaphore_up_no_waiter(&mut self, j: usize, k: usize) {
+        if j >= self.total.len() {
+            return;
+        }
+        self.available[j] += k;
+    }
+
+    pub fn allocation(&self, t: usize, j: usize) -> usize {
+        if t < self.allocation.len() && j < self.total.len() {
+            self.allocation[t][j]
+        } else {
+            0
         }
     }
 }

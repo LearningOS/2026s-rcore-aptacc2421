@@ -12,6 +12,14 @@ pub trait Mutex: Sync + Send {
     fn lock(&self);
     /// Unlock the mutex
     fn unlock(&self);
+    /// Whether the mutex is held (for deadlock detection snapshot).
+    fn is_locked_for_deadlock(&self) -> bool {
+        false
+    }
+    /// If `unlock` would hand the lock to a waiter, return that waiter's tid.
+    fn deadlock_unlock_handoff_tid(&self) -> Option<usize> {
+        None
+    }
 }
 
 /// Spinlock Mutex struct
@@ -29,6 +37,10 @@ impl MutexSpin {
 }
 
 impl Mutex for MutexSpin {
+    fn is_locked_for_deadlock(&self) -> bool {
+        *self.locked.exclusive_access()
+    }
+
     /// Lock the spinlock mutex
     fn lock(&self) {
         trace!("kernel: MutexSpin::lock");
@@ -78,6 +90,18 @@ impl MutexBlocking {
 }
 
 impl Mutex for MutexBlocking {
+    fn is_locked_for_deadlock(&self) -> bool {
+        self.inner.exclusive_access().locked
+    }
+
+    fn deadlock_unlock_handoff_tid(&self) -> Option<usize> {
+        let inner = self.inner.exclusive_access();
+        inner.wait_queue.front().map(|task| {
+            let task_inner = task.inner_exclusive_access();
+            task_inner.res.as_ref().unwrap().tid
+        })
+    }
+
     /// lock the blocking mutex
     fn lock(&self) {
         trace!("kernel: MutexBlocking::lock");

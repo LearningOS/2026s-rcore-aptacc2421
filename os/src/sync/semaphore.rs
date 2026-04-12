@@ -12,10 +12,30 @@ pub struct Semaphore {
 
 pub struct SemaphoreInner {
     pub count: isize,
+    /// Initial resource count (constant, for deadlock detection).
+    pub total: usize,
     pub wait_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
 impl Semaphore {
+    /// Tid at the front of the wait queue (for deadlock shadow updates), if any.
+    pub fn peek_waiter_tid(&self) -> Option<usize> {
+        let inner = self.inner.exclusive_access();
+        inner.wait_queue.front().map(|task| {
+            let task_inner = task.inner_exclusive_access();
+            task_inner.res.as_ref().unwrap().tid
+        })
+    }
+
+    /// Current counter value (for initializing deadlock state).
+    pub fn current_count(&self) -> isize {
+        self.inner.exclusive_access().count
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.inner.exclusive_access().total
+    }
+
     /// Create a new semaphore
     pub fn new(res_count: usize) -> Self {
         trace!("kernel: Semaphore::new");
@@ -23,6 +43,7 @@ impl Semaphore {
             inner: unsafe {
                 UPSafeCell::new(SemaphoreInner {
                     count: res_count as isize,
+                    total: res_count,
                     wait_queue: VecDeque::new(),
                 })
             },

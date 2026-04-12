@@ -1,7 +1,23 @@
-use crate::sync::{Condvar, Mutex, MutexBlocking, MutexSpin, Semaphore};
+use crate::sync::{
+    AcquireResult, Condvar, Mutex, MutexBlocking, MutexSpin, ResourceManager, Semaphore,
+};
 use crate::task::{block_current_and_run_next, current_process, current_task};
 use crate::timer::{add_timer, get_time_ms};
 use alloc::sync::Arc;
+
+/// User-visible error when the banker detects an unsafe (deadlock) state.
+pub const SYSCALL_DEADLOCK: isize = -0xDEAD;
+
+fn current_tid() -> usize {
+    current_task()
+        .unwrap()
+        .inner_exclusive_access()
+        .res
+        .as_ref()
+        .unwrap()
+        .tid
+}
+
 /// sleep syscall
 pub fn sys_sleep(ms: usize) -> isize {
     trace!(
@@ -41,7 +57,7 @@ pub fn sys_mutex_create(blocking: bool) -> isize {
         Some(Arc::new(MutexBlocking::new()))
     };
     let mut process_inner = process.inner_exclusive_access();
-    if let Some(id) = process_inner
+    let id = if let Some(id) = process_inner
         .mutex_list
         .iter()
         .enumerate()
@@ -49,11 +65,17 @@ pub fn sys_mutex_create(blocking: bool) -> isize {
         .map(|(id, _)| id)
     {
         process_inner.mutex_list[id] = mutex;
-        id as isize
+        id
     } else {
         process_inner.mutex_list.push(mutex);
-        process_inner.mutex_list.len() as isize - 1
+        process_inner.mutex_list.len() - 1
+    };
+    if process_inner.deadlock_detect {
+        if let Some(rm) = process_inner.resource_manager.as_mut() {
+            rm.sync_mutex_list(&process_inner.mutex_list);
+        }
     }
+    id as isize
 }
 /// mutex lock syscall
 pub fn sys_mutex_lock(mutex_id: usize) -> isize {
@@ -68,12 +90,38 @@ pub fn sys_mutex_lock(mutex_id: usize) -> isize {
             .unwrap()
             .tid
     );
+    let tid = current_tid();
     let process = current_process();
-    let process_inner = process.inner_exclusive_access();
-    let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
-    drop(process_inner);
-    drop(process);
+    {
+        let mut inner = process.inner_exclusive_access();
+        if inner.deadlock_detect {
+            if let Some(rm) = inner.resource_manager.as_mut() {
+                if mutex_id >= rm.mutex_check.num_resources()
+                    || rm.mutex_check.total.get(mutex_id).copied().unwrap_or(0) == 0
+                {
+                    return -1;
+                }
+                match rm.mutex_check.try_acquire(tid, mutex_id, 1) {
+                    Ok(AcquireResult::Granted) | Ok(AcquireResult::WillWait) => {}
+                    Err(()) => return SYSCALL_DEADLOCK,
+                }
+            }
+        }
+    }
+    let mutex = {
+        let inner = process.inner_exclusive_access();
+        Arc::clone(inner.mutex_list[mutex_id].as_ref().unwrap())
+    };
     mutex.lock();
+    if process.inner_exclusive_access().deadlock_detect {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if rm.mutex_check.allocation(tid, mutex_id) == 0 {
+                rm.mutex_check
+                    .complete_acquire_after_wait(tid, mutex_id, 1);
+            }
+        }
+    }
     0
 }
 /// mutex unlock syscall
@@ -89,12 +137,27 @@ pub fn sys_mutex_unlock(mutex_id: usize) -> isize {
             .unwrap()
             .tid
     );
+    let tid = current_tid();
     let process = current_process();
-    let process_inner = process.inner_exclusive_access();
-    let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
-    drop(process_inner);
-    drop(process);
+    let mutex = {
+        let inner = process.inner_exclusive_access();
+        Arc::clone(inner.mutex_list[mutex_id].as_ref().unwrap())
+    };
+    let handoff = mutex.deadlock_unlock_handoff_tid();
     mutex.unlock();
+    if process.inner_exclusive_access().deadlock_detect {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if mutex_id < rm.mutex_check.num_resources() && rm.mutex_check.total[mutex_id] > 0 {
+                if let Some(ntid) = handoff {
+                    rm.mutex_check
+                        .transfer_allocation(mutex_id, tid, ntid, 1);
+                } else {
+                    rm.mutex_check.release(tid, mutex_id, 1);
+                }
+            }
+        }
+    }
     0
 }
 /// semaphore create syscall
@@ -127,6 +190,11 @@ pub fn sys_semaphore_create(res_count: usize) -> isize {
             .push(Some(Arc::new(Semaphore::new(res_count))));
         process_inner.semaphore_list.len() - 1
     };
+    if process_inner.deadlock_detect {
+        if let Some(rm) = process_inner.resource_manager.as_mut() {
+            rm.sync_semaphore_list(&process_inner.semaphore_list);
+        }
+    }
     id as isize
 }
 /// semaphore up syscall
@@ -142,11 +210,33 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
             .unwrap()
             .tid
     );
+    let tid = current_tid();
     let process = current_process();
-    let process_inner = process.inner_exclusive_access();
-    let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
-    drop(process_inner);
+    let sem = {
+        let inner = process.inner_exclusive_access();
+        Arc::clone(inner.semaphore_list[sem_id].as_ref().unwrap())
+    };
+    let waiter = sem.peek_waiter_tid();
     sem.up();
+    if process.inner_exclusive_access().deadlock_detect {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if sem_id < rm.sem_check.num_resources() && rm.sem_check.total[sem_id] > 0 {
+                let caller_holds = rm.sem_check.allocation(tid, sem_id) > 0;
+                if let Some(wt) = waiter {
+                    if caller_holds {
+                        rm.sem_check.transfer_allocation(sem_id, tid, wt, 1);
+                    } else {
+                        rm.sem_check.semaphore_up_wake(sem_id, wt);
+                    }
+                } else if caller_holds {
+                    rm.sem_check.release(tid, sem_id, 1);
+                } else {
+                    rm.sem_check.semaphore_up_no_waiter(sem_id, 1);
+                }
+            }
+        }
+    }
     0
 }
 /// semaphore down syscall
@@ -162,11 +252,37 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
             .unwrap()
             .tid
     );
+    let tid = current_tid();
     let process = current_process();
-    let process_inner = process.inner_exclusive_access();
-    let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
-    drop(process_inner);
+    {
+        let mut inner = process.inner_exclusive_access();
+        if inner.deadlock_detect {
+            if let Some(rm) = inner.resource_manager.as_mut() {
+                if sem_id >= rm.sem_check.num_resources()
+                    || rm.sem_check.total.get(sem_id).copied().unwrap_or(0) == 0
+                {
+                    return -1;
+                }
+                match rm.sem_check.try_acquire(tid, sem_id, 1) {
+                    Ok(AcquireResult::Granted) | Ok(AcquireResult::WillWait) => {}
+                    Err(()) => return SYSCALL_DEADLOCK,
+                }
+            }
+        }
+    }
+    let sem = {
+        let inner = process.inner_exclusive_access();
+        Arc::clone(inner.semaphore_list[sem_id].as_ref().unwrap())
+    };
     sem.down();
+    if process.inner_exclusive_access().deadlock_detect {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if rm.sem_check.allocation(tid, sem_id) == 0 {
+                rm.sem_check.complete_acquire_after_wait(tid, sem_id, 1);
+            }
+        }
+    }
     0
 }
 /// condvar create syscall
@@ -234,38 +350,78 @@ pub fn sys_condvar_wait(condvar_id: usize, mutex_id: usize) -> isize {
             .unwrap()
             .tid
     );
+    let tid = current_tid();
     let process = current_process();
+    let dl = process.inner_exclusive_access().deadlock_detect;
     let process_inner = process.inner_exclusive_access();
     let condvar = Arc::clone(process_inner.condvar_list[condvar_id].as_ref().unwrap());
     let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
     drop(process_inner);
-    condvar.wait(mutex);
+
+    if !dl {
+        condvar.wait(mutex);
+        return 0;
+    }
+
+    // Mirror Condvar::wait but keep mutex shadow aligned with unlock / re-lock.
+    let handoff = mutex.deadlock_unlock_handoff_tid();
+    mutex.unlock();
+    {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if mutex_id < rm.mutex_check.num_resources() && rm.mutex_check.total[mutex_id] > 0 {
+                if let Some(ntid) = handoff {
+                    rm.mutex_check
+                        .transfer_allocation(mutex_id, tid, ntid, 1);
+                } else {
+                    rm.mutex_check.release(tid, mutex_id, 1);
+                }
+            }
+        }
+    }
+    {
+        let mut inner = condvar.inner.exclusive_access();
+        inner.wait_queue.push_back(current_task().unwrap());
+    }
+    block_current_and_run_next();
+
+    {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if mutex_id < rm.mutex_check.num_resources() && rm.mutex_check.total[mutex_id] > 0 {
+                match rm.mutex_check.try_acquire(tid, mutex_id, 1) {
+                    Ok(AcquireResult::Granted) | Ok(AcquireResult::WillWait) => {}
+                    Err(()) => return SYSCALL_DEADLOCK,
+                }
+            }
+        }
+    }
+    mutex.lock();
+    {
+        let mut inner = process.inner_exclusive_access();
+        if let Some(rm) = inner.resource_manager.as_mut() {
+            if rm.mutex_check.allocation(tid, mutex_id) == 0 {
+                rm.mutex_check
+                    .complete_acquire_after_wait(tid, mutex_id, 1);
+            }
+        }
+    }
     0
 }
 /// enable deadlock detection syscall
-///
-/// YOUR JOB: Implement deadlock detection, but might not all in this syscall
-/*
-参数：
-is_enable: 为 1 表示启用死锁检测， 0 表示禁用死锁检测。
-
-说明：
-开启死锁检测功能后， mutex_lock 和 semaphore_down 如果检测到死锁， 应拒绝相应操作并返回 -0xDEAD (十六进制值)。
-
-简便起见可对 mutex 和 semaphore 分别进行检测，无需考虑二者 (以及 waittid 等) 混合使用导致的死锁。
-
-返回值：如果出现了错误则返回 -1，否则返回 0。
-
-可能的错误
-参数不合法
-
-死锁检测开启失败
-*/
 pub fn sys_enable_deadlock_detect(enabled: usize) -> isize {
     trace!("kernel: sys_enable_deadlock_detect");
     if enabled != 0 && enabled != 1 {
         return -1;
-    } else {
-        0
     }
+    let process = current_process();
+    let mut inner = process.inner_exclusive_access();
+    if enabled == 0 {
+        inner.deadlock_detect = false;
+        inner.resource_manager = None;
+        return 0;
+    }
+    inner.deadlock_detect = true;
+    inner.resource_manager = Some(ResourceManager::from_process_inner(&*inner));
+    0
 }

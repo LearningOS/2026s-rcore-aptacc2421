@@ -7,7 +7,7 @@ use super::{add_task, SignalFlags};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell, ResourceCheck};
+use crate::sync::{Condvar, Mutex, ResourceManager, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
@@ -51,8 +51,8 @@ pub struct ProcessControlBlockInner {
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
     /// deadlock detection flag
     pub deadlock_detect: bool,
-    /// resource check info for deadlock detection
-    pub resource_check: Option<ResourceCheck>,
+    /// Deadlock detection (mutex / semaphore banker's state).
+    pub resource_manager: Option<ResourceManager>,
 }
 
 impl ProcessControlBlockInner {
@@ -124,7 +124,7 @@ impl ProcessControlBlock {
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
                     deadlock_detect: false,
-                    resource_check: None,
+                    resource_manager: None,
                 })
             },
         });
@@ -214,6 +214,10 @@ impl ProcessControlBlock {
         trap_cx.x[10] = args.len();
         trap_cx.x[11] = argv_base;
         *task_inner.get_trap_cx() = trap_cx;
+        drop(task_inner);
+        let mut pcb_inner = self.inner_exclusive_access();
+        pcb_inner.deadlock_detect = false;
+        pcb_inner.resource_manager = None;
     }
 
     /// Only support processes with a single thread.
@@ -252,7 +256,7 @@ impl ProcessControlBlock {
                     semaphore_list: Vec::new(),
                     condvar_list: Vec::new(),
                     deadlock_detect: false,
-                    resource_check: None,
+                    resource_manager: None,
                 })
             },
         });

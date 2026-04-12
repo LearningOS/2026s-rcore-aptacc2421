@@ -9,6 +9,7 @@ mod up;
 
 pub use condvar::Condvar;
 pub use mutex::{Mutex, MutexBlocking, MutexSpin};
-pub use resource_check::ResourceCheck;
+pub use resource_check::{AcquireResult, ResourceCheck};
+pub use resource_manager::ResourceManager;
 pub use semaphore::Semaphore;
 pub use up::UPSafeCell;
