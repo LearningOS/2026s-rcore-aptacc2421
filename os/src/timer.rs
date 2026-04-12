@@ -78,8 +78,10 @@ pub fn add_timer(expire_ms: usize, task: Arc<TaskControlBlock>) {
         "kernel:pid[{}] add_timer",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
+    println!("kernel: add_timer for task tid {} expire at {} ms", task.inner_exclusive_access().res.as_ref().unwrap().tid, expire_ms);
     let mut timers = TIMERS.exclusive_access();
     timers.push(TimerCondVar { expire_ms, task });
+    println!("kernel: add_timer END");
 }
 
 /// Remove a timer
@@ -101,8 +103,10 @@ pub fn remove_timer(task: Arc<TaskControlBlock>) {
 /// Check if the timer has expired
 pub fn check_timer() {
     trace!(
-        "kernel:pid[{}] check_timer",
-        current_task().unwrap().process.upgrade().unwrap().getpid()
+        "kernel: check_timer (current pid {:?})",
+        current_task()
+            .and_then(|t| t.process.upgrade())
+            .map(|p| p.getpid())
     );
     let current_ms = get_time_ms();
     let mut timers = TIMERS.exclusive_access();

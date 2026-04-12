@@ -69,6 +69,12 @@ pub fn run_tasks() {
                 __switch(idle_task_cx_ptr, next_task_cx_ptr);
             }
         } else {
+            // When every thread is blocked (e.g. main in sleep + children on sem),
+            // no timer interrupt may be taken in this kernel idle loop, so sleeping
+            // tasks would never wake. Poll the timer heap here.
+            println!("no tasks available in run_tasks, checking timers");
+            drop(processor);
+            crate::timer::check_timer();
             warn!("no tasks available in run_tasks");
         }
     }

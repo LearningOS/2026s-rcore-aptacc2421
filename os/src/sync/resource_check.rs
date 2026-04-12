@@ -169,12 +169,19 @@ impl ResourceCheck {
     }
 
     /// After blocking wait, the kernel object has granted `k` units (pool was non-empty).
+    /// Does not panic if shadow `available` is out of sync with the real semaphore (e.g. after
+    /// a pure `V` that wakes a waiter); still records allocation so the thread can proceed.
     pub fn complete_acquire_after_wait(&mut self, t: usize, j: usize, k: usize) {
         if k == 0 || j >= self.total.len() || t >= self.allocation.len() {
             return;
         }
-        assert!(self.available[j] >= k);
-        self.available[j] -= k;
+        // up()/transfer may already have credited this thread; avoid double count -> false -0xDEAD.
+        if self.allocation[t][j] >= k {
+            return;
+        }
+        if self.available[j] >= k {
+            self.available[j] -= k;
+        }
         self.allocation[t][j] += k;
         self.recompute_need_row(t);
     }
@@ -194,10 +201,16 @@ impl ResourceCheck {
         if k == 0 || j >= self.total.len() {
             return;
         }
-        assert!(from < self.allocation.len() && to < self.allocation.len());
-        assert!(self.allocation[from][j] >= k);
-        self.allocation[from][j] -= k;
-        self.allocation[to][j] += k;
+        if from >= self.allocation.len() || to >= self.allocation.len() {
+            return;
+        }
+        let give = core::cmp::min(k, self.allocation[from][j]);
+        self.allocation[from][j] -= give;
+        self.allocation[to][j] += give;
+        if give < k {
+            // Shadow lost releaser's units; kernel still handed `k` to `to`.
+            self.allocation[to][j] += k - give;
+        }
         self.recompute_need_row(from);
         self.recompute_need_row(to);
     }

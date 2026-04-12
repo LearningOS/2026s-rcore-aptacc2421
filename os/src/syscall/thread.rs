@@ -29,8 +29,6 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
             .ustack_base,
         true,
     ));
-    // add new task to scheduler
-    add_task(Arc::clone(&new_task));
     let new_task_inner = new_task.inner_exclusive_access();
     let new_task_res = new_task_inner.res.as_ref().unwrap();
     let new_task_tid = new_task_res.tid;
@@ -57,6 +55,10 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
         trap_handler as usize,
     );
     (*new_task_trap_cx).x[10] = arg;
+     drop(new_task_inner);
+    // Must run after tasks[] and ensure_threads so deadlock matrices have a row for new_task_tid
+    // before the new thread can be scheduled.
+    add_task(new_task);
     new_task_tid as isize
 }
 /// get current thread id syscall

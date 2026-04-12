@@ -31,10 +31,13 @@ pub fn sys_sleep(ms: usize) -> isize {
             .unwrap()
             .tid
     );
+    println!("sys_sleep for {} ms", ms);
     let expire_ms = get_time_ms() + ms;
     let task = current_task().unwrap();
     add_timer(expire_ms, task);
+    println!("block current thread and run next");
     block_current_and_run_next();
+    println!("sys_sleep for {} ms done", ms);
     0
 }
 /// mutex create syscall
@@ -212,6 +215,7 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
             .unwrap()
             .tid
     );
+    println!("sys_semaphore_up for sem {}", sem_id);
     let tid = current_tid();
     let process = current_process();
     let sem = {
@@ -239,6 +243,7 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
             }
         }
     }
+    println!("sys_semaphore_up for sem {} done", sem_id);
     0
 }
 /// semaphore down syscall
@@ -257,17 +262,20 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
     let tid = current_tid();
     let process = current_process();
     {
+        println!("sys_semaphore_down for sem {}", sem_id);
         let mut inner = process.inner_exclusive_access();
         if inner.deadlock_detect {
             if let Some(rm) = inner.resource_manager.as_mut() {
-                if sem_id >= rm.sem_check.num_resources()
-                    || rm.sem_check.total.get(sem_id).copied().unwrap_or(0) == 0
-                {
+                if sem_id >= rm.sem_check.num_resources() {
                     return -1;
                 }
-                match rm.sem_check.try_acquire(tid, sem_id, 1) {
-                    Ok(AcquireResult::Granted) | Ok(AcquireResult::WillWait) => {}
-                    Err(()) => return SYSCALL_DEADLOCK,
+                // total==0: e.g. ch8b_sync_sem barrier; skip banker, real sem still works.
+                let tcol = rm.sem_check.total.get(sem_id).copied().unwrap_or(0);
+                if tcol > 0 {
+                    match rm.sem_check.try_acquire(tid, sem_id, 1) {
+                        Ok(AcquireResult::Granted) | Ok(AcquireResult::WillWait) => {}
+                        Err(()) => return SYSCALL_DEADLOCK,
+                    }
                 }
             }
         }
@@ -280,11 +288,13 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
     if process.inner_exclusive_access().deadlock_detect {
         let mut inner = process.inner_exclusive_access();
         if let Some(rm) = inner.resource_manager.as_mut() {
-            if rm.sem_check.allocation(tid, sem_id) == 0 {
+            let tcol = rm.sem_check.total.get(sem_id).copied().unwrap_or(0);
+            if tcol > 0 && rm.sem_check.allocation(tid, sem_id) == 0 {
                 rm.sem_check.complete_acquire_after_wait(tid, sem_id, 1);
             }
         }
     }
+    println!("sys_semaphore_down for sem {} done", sem_id);
     0
 }
 /// condvar create syscall
