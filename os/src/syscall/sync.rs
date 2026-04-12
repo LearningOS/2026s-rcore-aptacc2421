@@ -71,8 +71,9 @@ pub fn sys_mutex_create(blocking: bool) -> isize {
         process_inner.mutex_list.len() - 1
     };
     if process_inner.deadlock_detect {
-        if let Some(rm) = process_inner.resource_manager.as_mut() {
+        if let Some(mut rm) = process_inner.resource_manager.take() {
             rm.sync_mutex_list(&process_inner.mutex_list);
+            process_inner.resource_manager = Some(rm);
         }
     }
     id as isize
@@ -191,8 +192,9 @@ pub fn sys_semaphore_create(res_count: usize) -> isize {
         process_inner.semaphore_list.len() - 1
     };
     if process_inner.deadlock_detect {
-        if let Some(rm) = process_inner.resource_manager.as_mut() {
+        if let Some(mut rm) = process_inner.resource_manager.take() {
             rm.sync_semaphore_list(&process_inner.semaphore_list);
+            process_inner.resource_manager = Some(rm);
         }
     }
     id as isize

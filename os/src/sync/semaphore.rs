@@ -32,6 +32,7 @@ impl Semaphore {
         self.inner.exclusive_access().count
     }
 
+    /// Get the total count (capacity) of this semaphore.
     pub fn total_count(&self) -> usize {
         self.inner.exclusive_access().total
     }

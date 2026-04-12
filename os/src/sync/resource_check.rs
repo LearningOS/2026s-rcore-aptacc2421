@@ -13,6 +13,8 @@ pub enum AcquireResult {
     WillWait,
 }
 
+/// Resource matrix for deadlock detection using Banker's algorithm.
+/// Tracks total resources, available resources, and allocation/max_claim/need for each thread.
 pub struct ResourceCheck {
     /// Total instances per resource type (constant).
     pub total: Vec<usize>,
@@ -23,6 +25,7 @@ pub struct ResourceCheck {
 }
 
 impl ResourceCheck {
+    /// Create an empty resource check state (no threads, no resources).
     pub fn empty() -> Self {
         Self {
             total: Vec::new(),
@@ -46,10 +49,12 @@ impl ResourceCheck {
         }
     }
 
+    /// Get the number of threads in this resource matrix.
     pub fn num_threads(&self) -> usize {
         self.allocation.len()
     }
 
+    /// Get the number of resource types tracked in this matrix.
     pub fn num_resources(&self) -> usize {
         self.total.len()
     }
@@ -72,6 +77,13 @@ impl ResourceCheck {
             self.allocation[i].push(0);
             self.max_claim[i].push(0);
             self.need[i].push(0);
+        }
+    }
+
+    /// Set the available count for resource `j`.
+    pub fn set_available(&mut self, j: usize, available: usize) {
+        if j < self.available.len() {
+            self.available[j] = available;
         }
     }
 
@@ -207,6 +219,7 @@ impl ResourceCheck {
         self.available[j] += k;
     }
 
+    /// Get the number of instances of resource `j` currently allocated to thread `t`.
     pub fn allocation(&self, t: usize, j: usize) -> usize {
         if t < self.allocation.len() && j < self.total.len() {
             self.allocation[t][j]

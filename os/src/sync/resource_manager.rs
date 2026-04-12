@@ -1,16 +1,23 @@
 //! Deadlock detection: separate banker's matrices for mutex and semaphore.
 
+use alloc::vec;
 use crate::sync::resource_check::ResourceCheck;
 use crate::sync::{Mutex, Semaphore};
 use crate::task::ProcessControlBlockInner;
 use alloc::sync::Arc;
 
+/// Resource deadlock detection manager using Banker's algorithm.
+/// Maintains separate resource matrices for mutexes and semaphores.
 pub struct ResourceManager {
+    /// Deadlock detection matrix for mutexes.
     pub mutex_check: ResourceCheck,
+    /// Deadlock detection matrix for semaphores.
     pub sem_check: ResourceCheck,
 }
 
 impl ResourceManager {
+    /// Initialize resource manager from process inner state.
+    /// Builds initial matrices based on existing mutexes and semaphores.
     pub fn from_process_inner(inner: &ProcessControlBlockInner) -> Self {
         let n = inner.tasks.len().max(1);
 
@@ -27,11 +34,12 @@ impl ResourceManager {
                 continue;
             }
             let mu = inner.mutex_list[j].as_ref().unwrap();
-            mutex_check.available[j] = if mu.is_locked_for_deadlock() {
+            let available_val = if mu.is_locked_for_deadlock() {
                 0
             } else {
                 1
             };
+            mutex_check.set_available(j, available_val);
         }
 
         let m_sem = inner.semaphore_list.len();
@@ -48,7 +56,8 @@ impl ResourceManager {
             }
             let sem = inner.semaphore_list[j].as_ref().unwrap();
             let c = sem.current_count();
-            sem_check.available[j] = if c > 0 { c as usize } else { 0 };
+            let available_val = if c > 0 { c as usize } else { 0 };
+            sem_check.set_available(j, available_val);
         }
 
         Self {
@@ -57,6 +66,7 @@ impl ResourceManager {
         }
     }
 
+    /// Ensure the resource matrices have at least `n` thread rows.
     pub fn ensure_threads(&mut self, n: usize) {
         self.mutex_check.ensure_threads(n);
         self.sem_check.ensure_threads(n);
@@ -70,11 +80,12 @@ impl ResourceManager {
         for j in 0..mutex_list.len() {
             if mutex_list[j].is_some() && self.mutex_check.total[j] == 0 {
                 self.mutex_check.total[j] = 1;
-                self.mutex_check.available[j] = 1;
+                self.mutex_check.set_available(j, 1);
             }
         }
     }
 
+    /// Synchronize the semaphore matrix columns with the current semaphore list.
     pub fn sync_semaphore_list(&mut self, sem_list: &[Option<Arc<Semaphore>>]) {
         while self.sem_check.num_resources() < sem_list.len() {
             self.sem_check.push_resource(0);
@@ -85,7 +96,8 @@ impl ResourceManager {
                     let total = sem.total_count();
                     let c = sem.current_count();
                     self.sem_check.total[j] = total;
-                    self.sem_check.available[j] = if c > 0 { c as usize } else { 0 };
+                    let available_val = if c > 0 { c as usize } else { 0 };
+                    self.sem_check.set_available(j, available_val);
                 }
             }
         }

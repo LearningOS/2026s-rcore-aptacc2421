@@ -42,8 +42,10 @@ pub fn sys_thread_create(entry: usize, arg: usize) -> isize {
     }
     tasks[new_task_tid] = Some(Arc::clone(&new_task));
     if process_inner.deadlock_detect {
-        if let Some(rm) = process_inner.resource_manager.as_mut() {
-            rm.ensure_threads(process_inner.tasks.len());
+        let tasks_len = process_inner.tasks.len();
+        if let Some(mut rm) = process_inner.resource_manager.take() {
+            rm.ensure_threads(tasks_len);
+            process_inner.resource_manager = Some(rm);
         }
     }
     let new_task_trap_cx = new_task_inner.get_trap_cx();
