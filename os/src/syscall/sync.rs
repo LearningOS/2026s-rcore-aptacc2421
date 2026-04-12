@@ -31,13 +31,13 @@ pub fn sys_sleep(ms: usize) -> isize {
             .unwrap()
             .tid
     );
-    println!("sys_sleep for {} ms", ms);
+    //println!("sys_sleep for {} ms", ms);
     let expire_ms = get_time_ms() + ms;
     let task = current_task().unwrap();
     add_timer(expire_ms, task);
-    println!("block current thread and run next");
+    //println!("block current thread and run next");
     block_current_and_run_next();
-    println!("sys_sleep for {} ms done", ms);
+    //println!("sys_sleep for {} ms done", ms);
     0
 }
 /// mutex create syscall
@@ -215,7 +215,7 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
             .unwrap()
             .tid
     );
-    println!("sys_semaphore_up for sem {}", sem_id);
+    //println!("sys_semaphore_up for sem {}", sem_id);
     let tid = current_tid();
     let process = current_process();
     let sem = {
@@ -243,7 +243,7 @@ pub fn sys_semaphore_up(sem_id: usize) -> isize {
             }
         }
     }
-    println!("sys_semaphore_up for sem {} done", sem_id);
+    //println!("sys_semaphore_up for sem {} done", sem_id);
     0
 }
 /// semaphore down syscall
@@ -262,7 +262,7 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
     let tid = current_tid();
     let process = current_process();
     {
-        println!("sys_semaphore_down for sem {}", sem_id);
+        //println!("sys_semaphore_down for sem {}", sem_id);
         let mut inner = process.inner_exclusive_access();
         if inner.deadlock_detect {
             if let Some(rm) = inner.resource_manager.as_mut() {
@@ -294,7 +294,7 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
             }
         }
     }
-    println!("sys_semaphore_down for sem {} done", sem_id);
+    //println!("sys_semaphore_down for sem {} done", sem_id);
     0
 }
 /// condvar create syscall
